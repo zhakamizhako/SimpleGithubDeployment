@@ -1,0 +1,67 @@
+name: Deploy to AWS Elastic Container
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - develop
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Build and Tag Docker Image
+      env:
+      run: |
+        docker build -t ${{secrets.REGION}}/myImage:${{ github.sha }} . 
+
+    - name: Auth to AWS, Push Docker Image to Container Registry
+      env:
+        AWS_KEY: ${{ secrets.AWS_KEY }}
+        AWS_SECRET: ${{ secrets.AWS_SECRET }}
+        REGION: ${{ secrets.REGION }}
+      run: |
+        export AWS_ACCESS_KEY=${{secrets.AWS_KEY}}
+        export AWS_SECRET_ACCESS_KEY=${{secrets.AWS_SECRET}}
+        export AWS_DEFAULT_REGION=ap-southeast-2
+        export AWS_OUTPUT_FORMAT="json"
+
+        aws configure set aws_access_key_id $AWS_ACCESS_KEY
+        aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+        aws configure set region $AWS_DEFAULT_REGION
+        aws configure set output $AWS_OUTPUT_FORMAT
+
+        aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin ${{secrets.REGION}}
+        docker push ${{secrets.REGION}}/myImage:${{ github.sha }}
+
+  deploy:
+    needs: build-image
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    steps:
+    - name: Deploy to VM Server
+      env:
+        REGION: ${{ secrets.REGION }}
+        KEY: ${{secrets.KEY}}
+      run: |
+        curl --request POST \
+          --url https://myhostname/docker \
+          --header 'Content-Type: application/json' \
+          --header 'key: ${{secrets.KEY}}' \
+          --data '{
+            "imageUrl":"${{secrets.REGION}}/myImage:${{github.sha}}",
+            "region": "${{secrets.REGION}}",
+            "id": "myImage"
+          }'
+
+  healthCheck:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+    - name: Health Check
+      run: |
+        # Perform health checks
+        curl https://myhostname/health

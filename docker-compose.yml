@@ -1,0 +1,58 @@
+version: '3.3'
+volumes:
+  db:
+
+services:
+  npm:
+    image: jc21/nginx-proxy-manager:2.10.4
+    container_name: npm
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443
+      - 81:81
+    environment:
+      DISABLE_IPV6: 'true'
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+
+  myImage-db:
+    image: mysql:5.7
+    volumes:
+      - ./mysql-init:/docker-entrypoint-initdb.d:Z,ro
+      - ./mysql/mysql:/var/lib/mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 1234 #Change as needed
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "0.0.0.0", "--password=1234" ]
+      timeout: 20s
+      retries: 10
+    ports:
+      - "3306:3306"
+
+  myImage-ui:
+    image: myImage-ui
+    restart: unless-stopped
+    ports:
+      - 5013:5013
+    environment:
+      - BASEURL="http://localhost:3333/api" 
+      # Indicate with the actual hostname since this is FE facing.
+
+  myImage-backend:
+    image: myImage-backend
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+      restart_policy:
+        condition: on-failure
+    depends_on: 
+      - myImage-db
+    ports:
+      - 3333:8000
+    environment:
+      - env1=ABCD
+      - env2=1234

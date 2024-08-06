@@ -1,0 +1,62 @@
+name: Deploy to GCP
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Build and Tag Docker Image
+      env:
+        GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        GCP_REGION: ${{ secrets.GCP_REGION }}
+        ARTIFACT_REPO: ${{ secrets.ARTIFACT_REPO }}
+      run: |
+        docker build -t ${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPO/myImage:${{ github.sha }} .
+
+    - name: Auth to GCP, Push Docker Image to Artifact Registry
+      env:
+        GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        GCP_REGION: ${{ secrets.GCP_REGION }}
+        ARTIFACT_REPO: ${{ secrets.ARTIFACT_REPO }}
+        GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      run: |
+        echo "$GCP_SA_KEY" | gcloud auth activate-service-account --key-file=-
+        echo "$GCP_SA_KEY" | gcloud auth configure-docker us-east4-docker.pkg.dev --quiet
+        gcloud auth list
+        docker push ${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPO/myImage:${{ github.sha }}
+
+  deploy:
+    needs: build-image
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    steps:
+    - name: Deploy to VM Server
+      env:
+        KEY: ${{ secrets.KEY }}
+        REGION: ${{ secrets.REGION }}
+      run: |
+        curl --request POST \
+          --url https://myhostname/docker \
+          --header 'Content-Type: application/json' \
+          --header 'key: ${{secrets.KEY}}' \
+          --data '{
+            "imageUrl":"${{secrets.REGION}}/myImage:${{github.sha}}",
+            "region": "${{secrets.REGION}}",
+            "id": "myImage"
+          }'
+
+  healthCheck:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+    - name: Health Check
+      run: |
+        # Perform health checks
+        curl https://myhostname/health
